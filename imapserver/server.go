@@ -109,7 +109,27 @@ var unhandledPanics atomic.Int64 // For tests.
 // Errors are logged and the durable outbox remains available for retry.
 type IMAPMutationHookFunc func(context.Context, store.IMAPMutationEvent) error
 
-var IMAPMutationHook IMAPMutationHookFunc
+// IMAPAuthorizationHookFunc authorizes an already credential-verified IMAP
+// identity before the connection enters the authenticated state. The hook
+// must not receive or inspect passwords; returning an error rejects the login.
+type IMAPAuthorizationHookFunc func(context.Context, string) error
+
+var (
+	IMAPMutationHook      IMAPMutationHookFunc
+	IMAPAuthorizationHook IMAPAuthorizationHookFunc
+)
+
+func (c *conn) authorizeIMAPIdentity(username string) {
+	if IMAPAuthorizationHook == nil {
+		return
+	}
+	if err := IMAPAuthorizationHook(context.Background(), username); err != nil {
+		c.loginAttempt.Result = store.AuthError
+		c.log.Info("IMAP identity rejected by authorization hook",
+			slog.String("username", username), slog.Any("error", err))
+		xusercodeErrorf("AUTHORIZATIONFAILED", "login not authorized")
+	}
+}
 
 var limiterConnectionrate, limiterConnections *ratelimit.Limiter
 
@@ -2949,6 +2969,8 @@ func (c *conn) cmdAuthenticate(tag, cmd string, p *parser) {
 		xuserErrorf("%w: %s", store.ErrLoginDisabled, accConf.LoginDisabled)
 	}
 
+	c.authorizeIMAPIdentity(username)
+
 	// We may already have TLS credentials. They won't have been enabled, or we could
 	// get here due to the state machine that doesn't allow authentication while being
 	// authenticated. But allow another SASL authentication, but it has to be for the
@@ -3057,6 +3079,8 @@ func (c *conn) cmdLogin(tag, cmd string, p *parser) {
 			c.xsanity(err, "close account")
 		}
 	}()
+
+	c.authorizeIMAPIdentity(username)
 
 	// We may already have TLS credentials. They won't have been enabled, or we could
 	// get here due to the state machine that doesn't allow authentication while being

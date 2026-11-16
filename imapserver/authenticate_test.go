@@ -26,6 +26,22 @@ import (
 	"github.com/mjl-/mox/store"
 )
 
+func TestAuthorizationHookRejectsVerifiedIdentity(t *testing.T) {
+	previous := IMAPAuthorizationHook
+	defer func() { IMAPAuthorizationHook = previous }()
+	IMAPAuthorizationHook = func(_ context.Context, username string) error {
+		if username != "mjl@mox.example" {
+			t.Fatalf("username = %q", username)
+		}
+		return errors.New("tenant mailbox is not authorized")
+	}
+
+	tc := start(t, false)
+	defer tc.close()
+	tc.transactf("no", "authenticate plain %s", base64.StdEncoding.EncodeToString([]byte("\\x00mjl@mox.example\\x00"+password0)))
+	tc.xcodeWord("AUTHORIZATIONFAILED")
+}
+
 func TestAuthenticateLogin(t *testing.T) {
 	// NFD username and PRECIS-cleaned password.
 	tc := start(t, false)
