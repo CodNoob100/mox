@@ -4734,6 +4734,8 @@ func (c *conn) cmdxCopy(isUID bool, tag, cmd string, p *parser) {
 	var mbDst store.Mailbox
 	var nkeywords int
 	var newUIDs []store.UID
+	var copySourceIDs []int64
+	var nmsgs []store.Message
 	var flags []store.Flags
 	var keywords [][]string
 	var modseq store.ModSeq // For messages in new mailbox, assigned when first message is copied.
@@ -4816,6 +4818,7 @@ func (c *conn) cmdxCopy(isUID bool, tag, cmd string, p *parser) {
 				}
 				origID := m.ID
 				origMsgIDs = append(origMsgIDs, origID)
+				copySourceIDs = append(copySourceIDs, origID)
 				m.ID = 0
 				m.UID = uidFirst + store.UID(i)
 				m.CreateSeq = modseq
@@ -4832,6 +4835,8 @@ func (c *conn) cmdxCopy(isUID bool, tag, cmd string, p *parser) {
 				m.SaveDate = &now
 				err := tx.Insert(&m)
 				xcheckf(err, "inserting message")
+				err = store.QueueIMAPCopy(tx, c.account.Name, mbDst, origID, uid, m, c.account.MessagePath(m.ID))
+				xcheckf(err, "queueing copy handoff")
 				msgs[uid] = m
 				nmsgs[i] = m
 				newUIDs = append(newUIDs, m.UID)
@@ -4909,6 +4914,15 @@ func (c *conn) cmdxCopy(isUID bool, tag, cmd string, p *parser) {
 			c.broadcast(changes)
 		}
 	})
+
+	if IMAPMutationHook != nil {
+		for i, m := range nmsgs {
+			event := store.NewIMAPCopyEvent(c.account.Name, mbDst, copySourceIDs[i], uids[i], m, c.account.MessagePath(m.ID))
+			if err := IMAPMutationHook(context.Background(), event); err != nil {
+				c.log.Errorx("IMAP mutation hook", err)
+			}
+		}
+	}
 
 	// ../rfc/9051:6881 ../rfc/4315:183
 	c.xwriteresultf("%s OK [COPYUID %d %s %s] copied", tag, mbDst.UIDValidity, compactUIDSet(uids).String(), compactUIDSet(newUIDs).String())

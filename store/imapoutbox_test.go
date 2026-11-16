@@ -47,3 +47,10 @@ func TestNewIMAPExpungeEvent(t *testing.T) {
 		t.Fatalf("unexpected event: %+v", event)
 	}
 }
+
+func TestNewIMAPCopyEvent(t *testing.T) {
+	event := NewIMAPCopyEvent("account", Mailbox{ID: 7, Name: "Archive"}, 2, 3, Message{ID: 9, UID: 11, ModSeq: 4}, "/messages/9")
+	if event.Operation != "COPY" || event.EventID != "imap-copy:account:9:11" || event.SourceMessageID != 2 || event.SourceUID != 3 || event.MailboxName != "Archive" || event.MessagePath != "/messages/9" {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+}
