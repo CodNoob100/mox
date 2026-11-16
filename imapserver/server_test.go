@@ -1036,3 +1036,19 @@ func TestBugConnectionSelectStatus(t *testing.T) {
 	tc.transactf("ok", "select inbox")
 	tc.transactf("ok", "status inbox (messages)")
 }
+
+func TestConnAllowCommandUsesRollingWindow(t *testing.T) {
+	c := &conn{}
+	start := time.Unix(100, 0)
+	for i := 0; i < imapCommandRateLimit; i++ {
+		if !c.allowCommand(start.Add(time.Duration(i) * time.Millisecond)) {
+			t.Fatalf("command %d rejected early", i)
+		}
+	}
+	if c.allowCommand(start.Add(30 * time.Second)) {
+		t.Fatal("command beyond rolling limit accepted")
+	}
+	if !c.allowCommand(start.Add(time.Minute + time.Millisecond)) {
+		t.Fatal("expired command window was not released")
+	}
+}

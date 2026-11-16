@@ -220,6 +220,7 @@ type conn struct {
 	cmd               string // Currently executing, for deciding to xapplyChanges and logging.
 	cmdMetric         string // Currently executing, for metrics.
 	cmdStart          time.Time
+	commandTimes      []time.Time         // accepted commands in the rolling one-minute window
 	ncmds             int                 // Number of commands processed. Used to abort connection when first incoming command is unknown/invalid.
 	log               mlog.Log            // Used for all synchronous logging on this connection, see logbg for logging in a separate goroutine.
 	enabled           map[capability]bool // All upper-case.
@@ -1357,6 +1358,9 @@ func (c *conn) command() {
 	default:
 	}
 
+	if !c.allowCommand(time.Now()) {
+		xuserErrorf("IMAP command rate limit exceeded (maximum 120 commands per minute)")
+	}
 	fn := commands[cmdlow]
 	if fn == nil {
 		xsyntaxErrorf("unknown command %q", cmd)
@@ -1389,6 +1393,24 @@ func (c *conn) broadcast(changes []store.Change) {
 	}
 	c.log.Debug("broadcast changes", slog.Any("changes", changes))
 	c.comm.Broadcast(changes)
+}
+
+const imapCommandRateLimit = 120
+
+// allowCommand enforces the RFC-facing per-connection command budget with a
+// rolling window, avoiding boundary bursts from fixed-minute counters.
+func (c *conn) allowCommand(now time.Time) bool {
+	cutoff := now.Add(-time.Minute)
+	first := 0
+	for first < len(c.commandTimes) && !c.commandTimes[first].After(cutoff) {
+		first++
+	}
+	c.commandTimes = append(c.commandTimes[:0], c.commandTimes[first:]...)
+	if len(c.commandTimes) >= imapCommandRateLimit {
+		return false
+	}
+	c.commandTimes = append(c.commandTimes, now)
+	return true
 }
 
 // matchStringer matches a string against reference + mailbox patterns.
