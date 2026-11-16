@@ -2927,7 +2927,22 @@ func (a *Account) MessagePath(messageID int64) string {
 
 // MessageReader opens a message for reading, transparently combining the
 // message prefix with the original incoming message.
+// MessageSourceHook can provide an authoritative host-owned message source.
+type MessageSourceHookFunc func(account string, message Message) (io.ReaderAt, int64, io.Closer, error)
+
+var MessageSourceHook MessageSourceHookFunc
+
 func (a *Account) MessageReader(m Message) *MsgReader {
+	if MessageSourceHook != nil {
+		source, size, closer, err := MessageSourceHook(a.Name, m)
+		if err != nil {
+			return &MsgReader{prefix: m.MsgPrefix, size: m.Size, err: err}
+		}
+		if source == nil || size < 0 {
+			return &MsgReader{prefix: m.MsgPrefix, size: m.Size, err: errors.New("authoritative message source is invalid")}
+		}
+		return SourceMsgReader(m.MsgPrefix, source, size, closer)
+	}
 	return &MsgReader{prefix: m.MsgPrefix, path: a.MessagePath(m.ID), size: m.Size}
 }
 

@@ -11,12 +11,14 @@ import (
 // database (typically received headers), followed by the on-disk msg file
 // contents. MsgReader is an io.Reader, io.ReaderAt and io.Closer.
 type MsgReader struct {
-	prefix []byte   // First part of the message. Typically contains received headers.
-	path   string   // To on-disk message file.
-	size   int64    // Total size of message, including prefix and contents from path.
-	offset int64    // Current reading offset.
-	f      *os.File // Opened path, automatically opened after prefix has been read.
-	err    error    // If set, error to return for reads. Sets io.EOF for readers, but ReadAt ignores them.
+	prefix       []byte   // First part of the message. Typically contains received headers.
+	path         string   // To on-disk message file.
+	size         int64    // Total size of message, including prefix and contents from path.
+	offset       int64    // Current reading offset.
+	f            *os.File // Opened path, automatically opened after prefix has been read.
+	source       io.ReaderAt
+	sourceCloser io.Closer
+	err          error // If set, error to return for reads. Sets io.EOF for readers, but ReadAt ignores them.
 }
 
 var errMsgClosed = errors.New("msg is closed")
@@ -24,6 +26,11 @@ var errMsgClosed = errors.New("msg is closed")
 // FileMsgReader makes a MsgReader for an open file.
 // If initialization fails, reads will return the error.
 // Only call close on the returned MsgReader if you want to close msgFile.
+// SourceMsgReader makes a MsgReader backed by a host-owned ReaderAt.
+func SourceMsgReader(prefix []byte, source io.ReaderAt, size int64, closer io.Closer) *MsgReader {
+	return &MsgReader{prefix: append([]byte(nil), prefix...), source: source, sourceCloser: closer, size: int64(len(prefix)) + size}
+}
+
 func FileMsgReader(prefix []byte, msgFile *os.File) *MsgReader {
 	mr := &MsgReader{prefix: prefix, path: msgFile.Name(), f: msgFile}
 	fi, err := msgFile.Stat()
@@ -71,16 +78,22 @@ func (m *MsgReader) read(buf []byte, off int64, pread bool) (int, error) {
 			continue
 		}
 
-		// Now we need to read from file. Ensure it is open.
-		if m.f == nil {
-			f, err := os.Open(m.path)
-			if err != nil {
-				m.err = err
-				break
+		// Read from the authoritative host source when configured; otherwise use Mox's native file.
+		var n int
+		var err error
+		if m.source != nil {
+			n, err = m.source.ReadAt(buf[o:], off-int64(len(m.prefix)))
+		} else {
+			if m.f == nil {
+				f, openErr := os.Open(m.path)
+				if openErr != nil {
+					m.err = openErr
+					break
+				}
+				m.f = f
 			}
-			m.f = f
+			n, err = m.f.ReadAt(buf[o:], off-int64(len(m.prefix)))
 		}
-		n, err := m.f.ReadAt(buf[o:], off-int64(len(m.prefix)))
 		if !pread && n > 0 {
 			m.offset += int64(n)
 		}
@@ -115,6 +128,12 @@ func (m *MsgReader) Close() error {
 			return err
 		}
 		m.f = nil
+	}
+	if m.sourceCloser != nil {
+		if err := m.sourceCloser.Close(); err != nil {
+			return err
+		}
+		m.sourceCloser = nil
 	}
 	if m.err == errMsgClosed {
 		return m.err
