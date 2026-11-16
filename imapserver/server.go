@@ -4475,6 +4475,7 @@ func (c *conn) cmdClose(tag, cmd string, p *parser) {
 // removal of the messages, but if no messages were expunged the current latest max
 // modseq for the mailbox is returned.
 func (c *conn) xexpunge(uidSet *numSet, missingMailboxOK bool) (expunged []store.Message, highestModSeq store.ModSeq) {
+	var mailbox store.Mailbox
 	c.account.WithWLock(func() {
 		var changes []store.Change
 
@@ -4488,6 +4489,7 @@ func (c *conn) xexpunge(uidSet *numSet, missingMailboxOK bool) (expunged []store
 				xusercodeErrorf("NONEXISTENT", "%w", store.ErrUnknownMailbox)
 			}
 			xcheckf(err, "get mailbox")
+			mailbox = mb
 
 			xlastUID := c.newCachedLastUID(tx, c.mailboxID, func(err error) { xuserErrorf("%s", err) })
 
@@ -4526,6 +4528,15 @@ func (c *conn) xexpunge(uidSet *numSet, missingMailboxOK bool) (expunged []store
 
 		c.broadcast(changes)
 	})
+
+	if IMAPMutationHook != nil {
+		for _, m := range expunged {
+			event := store.NewIMAPExpungeEvent(c.account.Name, mailbox, m, highestModSeq)
+			if err := IMAPMutationHook(context.Background(), event); err != nil {
+				c.log.Errorx("IMAP mutation hook", err)
+			}
+		}
+	}
 
 	return expunged, highestModSeq
 }

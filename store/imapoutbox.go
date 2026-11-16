@@ -29,6 +29,17 @@ type IMAPMutationEvent struct {
 }
 
 // NewIMAPAppendEvent builds the handoff payload for a committed APPEND.
+// NewIMAPExpungeEvent builds a post-commit handoff payload for a message
+// tombstoned by EXPUNGE. The object path remains available for retention and
+// reconciliation policies.
+func NewIMAPExpungeEvent(account string, mailbox Mailbox, message Message, modseq ModSeq) IMAPMutationEvent {
+	return IMAPMutationEvent{
+		EventID: fmt.Sprintf("imap-expunge:%s:%d:%d", account, message.ID, modseq),
+		Account: account, Operation: "EXPUNGE", MailboxID: mailbox.ID, MessageID: message.ID,
+		UID: message.UID, ModSeq: modseq, MailboxName: mailbox.Name,
+	}
+}
+
 // NewIMAPStoreEvent builds a post-commit handoff payload for a committed
 // message flag/keyword mutation.
 func NewIMAPStoreEvent(account string, mailbox Mailbox, message Message) IMAPMutationEvent {

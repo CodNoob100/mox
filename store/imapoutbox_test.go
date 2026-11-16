@@ -40,3 +40,10 @@ func TestNewIMAPStoreEvent(t *testing.T) {
 		t.Fatalf("unexpected event: %+v", event)
 	}
 }
+
+func TestNewIMAPExpungeEvent(t *testing.T) {
+	event := NewIMAPExpungeEvent("account", Mailbox{ID: 7, Name: "INBOX"}, Message{ID: 9, UID: 3}, 4)
+	if event.Operation != "EXPUNGE" || event.EventID != "imap-expunge:account:9:4" || event.MailboxName != "INBOX" || event.UID != 3 || event.ModSeq != 4 {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+}
