@@ -93,6 +93,26 @@ type PreAcceptHookFunc func(context.Context, PreAcceptInput) (PreAcceptDecision,
 // policy can register it during process startup.
 var PreAcceptHook PreAcceptHookFunc
 
+// PostDataInput is the complete SMTP envelope and raw MIME data received after
+// DATA has been read successfully. DataFile is positioned at offset zero and
+// remains owned by Mox; hooks must not close it.
+type PostDataInput struct {
+	Sender     smtp.Path
+	Recipients []smtp.Path
+	DataFile   *os.File
+	Size       int64
+	Submission bool
+}
+
+// PostDataHookFunc is called synchronously after DATA is received and before
+// Mox performs its native submission or local delivery. A returned error is a
+// temporary SMTP failure and prevents acknowledgement of the transaction.
+type PostDataHookFunc func(context.Context, PostDataInput) error
+
+// PostDataHook is nil by default. Hosts may register a durable application
+// integration during process startup.
+var PostDataHook PostDataHookFunc
+
 var limiterConnectionRate, limiterConnections *ratelimit.Limiter
 
 // For delivery rate limiting. Variable because changed during tests.
@@ -2206,6 +2226,21 @@ func (c *conn) cmdData(p *parser) {
 		c.xwritecodeline(smtp.C451LocalErr, smtp.SeSys3Other0, fmt.Sprintf("error copying data to file (%s)", mox.ReceivedID(c.cid)), err)
 		io.Copy(io.Discard, dr)
 		return
+	}
+
+	if PostDataHook != nil {
+		if _, err := dataFile.Seek(0, io.SeekStart); err != nil {
+			xsmtpServerErrorf(errCodes(smtp.C451LocalErr, smtp.SeSys3Other0, err), "rewinding message for post-DATA hook")
+		}
+		recipients := make([]smtp.Path, 0, len(c.recipients))
+		for _, recipient := range c.recipients {
+			recipients = append(recipients, recipient.Addr)
+		}
+		if err := PostDataHook(cidctx, PostDataInput{
+			Sender: *c.mailFrom, Recipients: recipients, DataFile: dataFile, Size: n, Submission: c.submission,
+		}); err != nil {
+			xsmtpErrorf(smtp.C451LocalErr, smtp.SeSys3Other0, true, "message persistence failed")
+		}
 	}
 
 	// Basic sanity checks on messages before we send them out to the world. Just
