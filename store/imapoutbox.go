@@ -24,6 +24,19 @@ type IMAPMutationEvent struct {
 	Flags       Flags
 	Keywords    []string
 	MessagePath string `bstore:"nonzero"`
+	MailboxName string `bstore:"nonzero"`
+	MsgPrefix   []byte
+}
+
+// NewIMAPAppendEvent builds the handoff payload for a committed APPEND.
+func NewIMAPAppendEvent(account string, mailbox Mailbox, message Message, messagePath string) IMAPMutationEvent {
+	return IMAPMutationEvent{
+		EventID: fmt.Sprintf("imap-append:%s:%d:%d", account, message.ID, message.UID),
+		Account: account, Operation: "APPEND", MailboxID: mailbox.ID, MessageID: message.ID,
+		UID: message.UID, ModSeq: message.ModSeq, Size: message.Size, Received: message.Received,
+		Flags: message.Flags, Keywords: append([]string(nil), message.Keywords...), MessagePath: messagePath,
+		MailboxName: mailbox.Name, MsgPrefix: append([]byte(nil), message.MsgPrefix...),
+	}
 }
 
 // QueueIMAPAppend records a committed-message handoff while the caller still
@@ -39,7 +52,7 @@ func QueueIMAPAppend(tx *bstore.Tx, account string, mailbox Mailbox, message Mes
 		EventID: fmt.Sprintf("imap-append:%s:%d:%d", account, message.ID, message.UID),
 		Account: account, Operation: "APPEND", MailboxID: mailbox.ID, MessageID: message.ID,
 		UID: message.UID, ModSeq: message.ModSeq, Size: message.Size, Received: message.Received,
-		Flags: message.Flags, Keywords: append([]string(nil), message.Keywords...), MessagePath: messagePath,
+		Flags: message.Flags, Keywords: append([]string(nil), message.Keywords...), MessagePath: messagePath, MailboxName: mailbox.Name, MsgPrefix: append([]byte(nil), message.MsgPrefix...),
 	}
 	return tx.Insert(&event)
 }

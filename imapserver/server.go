@@ -105,6 +105,12 @@ var (
 
 var unhandledPanics atomic.Int64 // For tests.
 
+// IMAPMutationHook receives APPEND events after the native bstore transaction commits.
+// Errors are logged and the durable outbox remains available for retry.
+type IMAPMutationHookFunc func(context.Context, store.IMAPMutationEvent) error
+
+var IMAPMutationHook IMAPMutationHookFunc
+
 var limiterConnectionrate, limiterConnections *ratelimit.Limiter
 
 func init() {
@@ -4248,6 +4254,14 @@ func (c *conn) cmdAppend(tag, cmd string, p *parser) {
 		c.broadcast(changes)
 	})
 
+	if IMAPMutationHook != nil {
+		for _, a := range appends {
+			event := store.NewIMAPAppendEvent(c.account.Name, mb, a.m, c.account.MessagePath(a.m.ID))
+			if err := IMAPMutationHook(context.Background(), event); err != nil {
+				c.log.Errorx("IMAP mutation hook", err)
+			}
+		}
+	}
 	if c.mailboxID == mb.ID {
 		l := pendingChanges
 		pendingChanges = nil

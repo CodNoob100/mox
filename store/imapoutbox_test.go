@@ -20,7 +20,7 @@ func TestQueueIMAPAppendPersistsAtomicEvent(t *testing.T) {
 	defer db.Close()
 	received := time.Unix(123, 0).UTC()
 	err = db.Write(context.Background(), func(tx *bstore.Tx) error {
-		return QueueIMAPAppend(tx, "account", Mailbox{ID: 7}, Message{ID: 9, UID: 3, ModSeq: 4, Size: 10, Received: received, Keywords: []string{"$label"}}, "/messages/9")
+		return QueueIMAPAppend(tx, "account", Mailbox{ID: 7, Name: "INBOX"}, Message{ID: 9, UID: 3, ModSeq: 4, Size: 10, Received: received, Keywords: []string{""}}, "/messages/9")
 	})
 	if err != nil {
 		t.Fatal(err)
