@@ -4218,6 +4218,8 @@ func (c *conn) cmdAppend(tag, cmd string, p *parser) {
 				err = c.account.MessageAdd(c.log, tx, &mb, &a.m, a.file, store.AddOpts{SkipDirSync: true})
 				xcheckf(err, "delivering message")
 
+				err = store.QueueIMAPAppend(tx, c.account.Name, mb, a.m, c.account.MessagePath(a.m.ID))
+				xcheckf(err, "queue IMAP APPEND mutation")
 				changes = append(changes, a.m.ChangeAddUID(mb))
 
 				msgDirs[filepath.Dir(c.account.MessagePath(a.m.ID))] = struct{}{}

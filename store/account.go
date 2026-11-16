@@ -930,6 +930,7 @@ type MessageErase struct {
 
 // Types stored in DB.
 var DBTypes = []any{
+	IMAPMutationEvent{},
 	NextUIDValidity{},
 	Message{},
 	Recipient{},
