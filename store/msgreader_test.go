@@ -1,8 +1,11 @@
 package store
 
 import (
+	"bytes"
+	"errors"
 	"io"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -80,5 +83,35 @@ func TestMsgreader(t *testing.T) {
 
 	if err := mr.Close(); err != nil {
 		t.Fatalf("close: %v", err)
+	}
+}
+
+type testSourceCloser struct{ closed bool }
+
+func (c *testSourceCloser) Close() error { c.closed = true; return nil }
+
+func TestSourceMsgReader(t *testing.T) {
+	data := []byte("Subject: source\r\n\r\nbody")
+	closer := &testSourceCloser{}
+	mr := SourceMsgReader([]byte("prefix"), bytes.NewReader(data), int64(len(data)), closer)
+	got, err := io.ReadAll(mr)
+	if err != nil || string(got) != "prefixSubject: source\r\n\r\nbody" {
+		t.Fatalf("got %q err=%v", got, err)
+	}
+	if err := mr.Close(); err != nil || !closer.closed {
+		t.Fatalf("close err=%v closed=%v", err, closer.closed)
+	}
+}
+
+func TestMessageReaderHookFailsClosed(t *testing.T) {
+	previous := MessageSourceHook
+	defer func() { MessageSourceHook = previous }()
+	MessageSourceHook = func(string, Message) (io.ReaderAt, int64, io.Closer, error) {
+		return nil, 0, nil, errors.New("object unavailable")
+	}
+	a := &Account{Name: "alice"}
+	mr := a.MessageReader(Message{ID: 1, MsgPrefix: []byte("prefix"), Size: 6})
+	if _, err := io.ReadAll(mr); err == nil || !strings.Contains(err.Error(), "object unavailable") {
+		t.Fatalf("read err=%v", err)
 	}
 }

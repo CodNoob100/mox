@@ -40,7 +40,7 @@ func NewIMAPMoveEvent(account string, sourceMailbox, destinationMailbox Mailbox,
 		Account: account, Operation: "MOVE", MailboxID: destinationMailbox.ID, MessageID: message.ID,
 		UID: message.UID, ModSeq: message.ModSeq, Size: message.Size, Received: message.Received,
 		Flags: message.Flags, Keywords: append([]string(nil), message.Keywords...),
-		MessagePath: messagePath, MailboxName: destinationMailbox.Name,
+		MessagePath: messagePath, MailboxName: destinationMailbox.Name, MsgPrefix: append([]byte(nil), message.MsgPrefix...),
 		SourceMessageID: sourceID, SourceUID: sourceUID, SourceMailboxName: sourceMailbox.Name,
 	}
 }
