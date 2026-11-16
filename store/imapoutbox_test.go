@@ -33,3 +33,10 @@ func TestQueueIMAPAppendPersistsAtomicEvent(t *testing.T) {
 		t.Fatalf("unexpected event: %+v", event)
 	}
 }
+
+func TestNewIMAPStoreEvent(t *testing.T) {
+	event := NewIMAPStoreEvent("account", Mailbox{ID: 7, Name: "INBOX"}, Message{ID: 9, UID: 3, ModSeq: 4, Flags: Flags{Seen: true}, Keywords: []string{"$label"}})
+	if event.Operation != "STORE" || event.EventID != "imap-store:account:9:4" || event.MailboxName != "INBOX" || !event.Flags.Seen || len(event.Keywords) != 1 || event.MessagePath != "" {
+		t.Fatalf("unexpected event: %+v", event)
+	}
+}

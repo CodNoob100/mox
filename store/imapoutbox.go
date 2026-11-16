@@ -23,12 +23,23 @@ type IMAPMutationEvent struct {
 	Received    time.Time
 	Flags       Flags
 	Keywords    []string
-	MessagePath string `bstore:"nonzero"`
+	MessagePath string
 	MailboxName string `bstore:"nonzero"`
 	MsgPrefix   []byte
 }
 
 // NewIMAPAppendEvent builds the handoff payload for a committed APPEND.
+// NewIMAPStoreEvent builds a post-commit handoff payload for a committed
+// message flag/keyword mutation.
+func NewIMAPStoreEvent(account string, mailbox Mailbox, message Message) IMAPMutationEvent {
+	return IMAPMutationEvent{
+		EventID: fmt.Sprintf("imap-store:%s:%d:%d", account, message.ID, message.ModSeq),
+		Account: account, Operation: "STORE", MailboxID: mailbox.ID, MessageID: message.ID,
+		UID: message.UID, ModSeq: message.ModSeq, Flags: message.Flags,
+		Keywords: append([]string(nil), message.Keywords...), MailboxName: mailbox.Name,
+	}
+}
+
 func NewIMAPAppendEvent(account string, mailbox Mailbox, message Message, messagePath string) IMAPMutationEvent {
 	return IMAPMutationEvent{
 		EventID: fmt.Sprintf("imap-append:%s:%d:%d", account, message.ID, message.UID),

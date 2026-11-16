@@ -5343,6 +5343,18 @@ func (c *conn) cmdxStore(isUID bool, tag, cmd string, p *parser) {
 		c.broadcast(changes)
 	})
 
+	if IMAPMutationHook != nil {
+		for _, m := range updated {
+			if !modified[m.ID] {
+				continue
+			}
+			event := store.NewIMAPStoreEvent(c.account.Name, mb, m)
+			if err := IMAPMutationHook(context.Background(), event); err != nil {
+				c.log.Errorx("IMAP mutation hook", err)
+			}
+		}
+	}
+
 	// In the RFC, the section about STORE/UID STORE says we must return MODSEQ when
 	// UNCHANGEDSINCE was specified. It does not specify it in case UNCHANGEDSINCE
 	// isn't specified. For that case it does say MODSEQ is needed in unsolicited
