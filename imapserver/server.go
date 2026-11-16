@@ -3719,7 +3719,7 @@ func (c *conn) cmdRename(tag, cmd string, p *parser) {
 			q.FilterEqual("Expunged", false)
 			q.SortAsc("UID")
 
-			newIDs, chl := c.xmoveMessages(tx, q, 0, modseq, &mbSrc, &mbDst)
+			newIDs, _, _, _, chl := c.xmoveMessages(tx, q, 0, modseq, &mbSrc, &mbDst)
 			changes = append(changes, chl...)
 			cleanupIDs = newIDs
 		})
@@ -4950,11 +4950,15 @@ func (c *conn) cmdxMove(isUID bool, tag, cmd string, p *parser) {
 	// UIDs to move.
 	var uids []store.UID
 
+	var mbSrc store.Mailbox
 	var mbDst store.Mailbox
 	var uidFirst store.UID
 	var modseq store.ModSeq
 
 	var cleanupIDs []int64
+	var movedMessages []store.Message
+	var movedSourceIDs []int64
+	var movedSourceUIDs []store.UID
 	defer func() {
 		for _, id := range cleanupIDs {
 			p := c.account.MessagePath(id)
@@ -4965,9 +4969,10 @@ func (c *conn) cmdxMove(isUID bool, tag, cmd string, p *parser) {
 
 	c.account.WithWLock(func() {
 		var changes []store.Change
+		var moveChanges []store.Change
 
 		c.xdbwrite(func(tx *bstore.Tx) {
-			mbSrc := c.xmailboxID(tx, c.mailboxID) // Validate.
+			mbSrc = c.xmailboxID(tx, c.mailboxID) // Validate.
 			mbDst = c.xmailbox(tx, name, "TRYCREATE")
 			if mbDst.ID == c.mailboxID {
 				xuserErrorf("cannot move to currently selected mailbox")
@@ -4993,15 +4998,23 @@ func (c *conn) cmdxMove(isUID bool, tag, cmd string, p *parser) {
 			q.FilterEqual("Expunged", false)
 			q.SortAsc("UID")
 
-			newIDs, chl := c.xmoveMessages(tx, q, len(uids), modseq, &mbSrc, &mbDst)
-			changes = append(changes, chl...)
-			cleanupIDs = newIDs
+			cleanupIDs, movedMessages, movedSourceIDs, movedSourceUIDs, moveChanges = c.xmoveMessages(tx, q, len(uids), modseq, &mbSrc, &mbDst)
+			changes = append(changes, moveChanges...)
 		})
 
 		cleanupIDs = nil
 
 		c.broadcast(changes)
 	})
+
+	if IMAPMutationHook != nil {
+		for i, m := range movedMessages {
+			event := store.NewIMAPMoveEvent(c.account.Name, mbSrc, mbDst, movedSourceIDs[i], movedSourceUIDs[i], m, c.account.MessagePath(m.ID))
+			if err := IMAPMutationHook(context.Background(), event); err != nil {
+				c.log.Errorx("IMAP mutation hook", err)
+			}
+		}
+	}
 
 	// ../rfc/9051:4708 ../rfc/6851:254
 	// ../rfc/9051:4713
@@ -5041,8 +5054,11 @@ func (c *conn) cmdxMove(isUID bool, tag, cmd string, p *parser) {
 }
 
 // q must yield messages from a single mailbox.
-func (c *conn) xmoveMessages(tx *bstore.Tx, q *bstore.Query[store.Message], expectCount int, modseq store.ModSeq, mbSrc, mbDst *store.Mailbox) (newIDs []int64, changes []store.Change) {
+func (c *conn) xmoveMessages(tx *bstore.Tx, q *bstore.Query[store.Message], expectCount int, modseq store.ModSeq, mbSrc, mbDst *store.Mailbox) (newIDs []int64, moved []store.Message, sourceIDs []int64, sourceUIDs []store.UID, changes []store.Change) {
 	newIDs = make([]int64, 0, expectCount)
+	moved = make([]store.Message, 0, expectCount)
+	sourceIDs = make([]int64, 0, expectCount)
+	sourceUIDs = make([]store.UID, 0, expectCount)
 	var commit bool
 	defer func() {
 		if commit {
@@ -5089,6 +5105,8 @@ func (c *conn) xmoveMessages(tx *bstore.Tx, q *bstore.Query[store.Message], expe
 	syncDirs := map[string]struct{}{}
 
 	for _, om := range l {
+		sourceID := om.ID
+		sourceUID := om.UID
 		nm := om
 		nm.MailboxID = mbDst.ID
 		nm.UID = mbDst.UIDNext
@@ -5109,6 +5127,11 @@ func (c *conn) xmoveMessages(tx *bstore.Tx, q *bstore.Query[store.Message], expe
 
 		err = tx.Update(&nm)
 		xcheckf(err, "updating message with new mailbox")
+		err = store.QueueIMAPMove(tx, c.account.Name, *mbSrc, *mbDst, sourceID, sourceUID, nm, c.account.MessagePath(nm.ID))
+		xcheckf(err, "queueing move handoff")
+		moved = append(moved, nm)
+		sourceIDs = append(sourceIDs, sourceID)
+		sourceUIDs = append(sourceUIDs, sourceUID)
 
 		mbDst.Add(nm.MailboxCounts())
 
