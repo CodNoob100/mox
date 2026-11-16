@@ -71,6 +71,28 @@ var errIO = errors.New("io error")
 // delivered to the account named mox.
 var Localserve bool
 
+// PreAcceptInput is the envelope boundary exposed to a hosting application
+// before an inbound recipient is accepted. The hook runs only for delivery
+// (not authenticated submission) and must not inspect message content.
+type PreAcceptInput struct {
+	Sender    smtp.Path
+	Recipient smtp.Path
+}
+
+// PreAcceptDecision carries the SMTP disposition returned by a host policy.
+// Code must be 250 to accept, or 451/550 to defer/reject the recipient.
+type PreAcceptDecision struct {
+	Code         int
+	EnhancedCode string
+	Message      string
+}
+
+type PreAcceptHookFunc func(context.Context, PreAcceptInput) (PreAcceptDecision, error)
+
+// PreAcceptHook is nil by default. Hosts that need tenant-scoped inbound
+// policy can register it during process startup.
+var PreAcceptHook PreAcceptHookFunc
+
 var limiterConnectionRate, limiterConnections *ratelimit.Limiter
 
 // For delivery rate limiting. Variable because changed during tests.
@@ -1953,6 +1975,34 @@ func (c *conn) cmdRcpt(p *parser) {
 	// recipient could be the tls reporting addresses, which must always be able to
 	// receive in plain text.
 	c.xneedTLSForDelivery(fpath)
+
+	if !c.submission && PreAcceptHook != nil && c.mailFrom != nil {
+		cidctx := context.WithValue(mox.Context, mlog.CidKey, c.cid)
+		decision, err := PreAcceptHook(cidctx, PreAcceptInput{Sender: *c.mailFrom, Recipient: fpath})
+		if err != nil {
+			xsmtpErrorf(smtp.C451LocalErr, smtp.SeSys3Other0, true, "recipient screening failed")
+		}
+		message := decision.Message
+		if message == "" {
+			message = "recipient screening decision"
+		}
+		switch decision.Code {
+		case smtp.C250Completed:
+			// Continue with the normal recipient lookup and acceptance path.
+		case smtp.C451LocalErr:
+			if decision.EnhancedCode == "" {
+				decision.EnhancedCode = smtp.SeSys3Other0
+			}
+			xsmtpErrorf(decision.Code, decision.EnhancedCode, true, "%s", message)
+		case smtp.C550MailboxUnavail:
+			if decision.EnhancedCode == "" {
+				decision.EnhancedCode = smtp.SeAddr1UnknownDestMailbox1
+			}
+			xsmtpErrorf(decision.Code, decision.EnhancedCode, true, "%s", message)
+		default:
+			xsmtpErrorf(smtp.C451LocalErr, smtp.SeSys3Other0, true, "recipient screening returned invalid SMTP code")
+		}
+	}
 
 	// todo future: for submission, should we do explicit verification that domains are fully qualified? also for mail from. ../rfc/6409:420
 
