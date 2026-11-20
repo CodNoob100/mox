@@ -1544,6 +1544,27 @@ func deliver(log mlog.Log, resolver dns.Resolver, m0 Msg) {
 	} else {
 		qlog.Debug("delivering to single recipient", slog.Any("msgid", m0.ID), slog.Any("recipient", m0.Recipient()))
 	}
+	if OutboundPolicyHook != nil {
+		for _, msg := range msgs {
+			decision, hookErr := OutboundPolicyHook(ctx, OutboundPolicyInput{
+				Sender: msg.Sender(), Recipient: msg.Recipient(), MessagePath: msg.MessagePath(),
+				MsgPrefix: append([]byte(nil), msg.MsgPrefix...), Size: msg.Size,
+			})
+			if hookErr != nil {
+				decision = OutboundPolicyDecision{Code: smtp.C451LocalErr, EnhancedCode: smtp.SeSys3Other0, Message: "outbound policy unavailable"}
+			}
+			if decision.Code != 0 {
+				code := decision.Code
+				if code < 400 || code > 599 { code = smtp.C451LocalErr }
+				permanent := decision.Permanent || code >= 500
+				msg := decision.Message
+				if msg == "" { msg = "outbound message rejected by policy" }
+				err := smtpclient.Error{Permanent: permanent, Code: code, Secode: smtp.SePol7Other0, Err: fmt.Errorf("%s", msg)}
+				failMsgsDB(qlog, msgs, m0.DialedIPs, backoff, remoteMTA, err)
+				return
+			}
+		}
+	}
 
 	// Test for "Fail" transport before Localserve.
 	if transport.Fail != nil {
