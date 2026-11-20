@@ -2,7 +2,6 @@ package queue
 
 import (
 	"context"
-	"os"
 
 	"github.com/mjl-/mox/smtp"
 )
@@ -32,8 +31,3 @@ type OutboundPolicyHookFunc func(context.Context, OutboundPolicyInput) (Outbound
 // startup; Mox calls it before remote delivery is attempted.
 var OutboundPolicyHook OutboundPolicyHookFunc
 
-// OpenMessage exposes the queue message body to a host policy without making
-// the policy depend on Mox's internal message-reader implementation.
-func OpenMessage(input OutboundPolicyInput) (*os.File, error) {
-	return os.Open(input.MessagePath)
-}
